@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10131b">
+  <meta name="description" content="Private, browser-based Universal Intelligence agent">
+  <title>UNIVERSAL INTELLIGENCE</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">UI</div><div><strong>UNIVERSAL<br>INTELLIGENCE</strong><small>PRIVATE AI WORKSPACE</small></div></div>
+      <button class="new-chat" id="newChat">＋ New conversation</button>
+      <div class="side-label">WORKSPACE</div>
+      <button class="nav active" data-panel="chat">◈ <span>Assistant</span></button>
+      <button class="nav" data-panel="projects">▤ <span>Projects & memory</span></button>
+      <button class="nav" data-panel="sync">⇅ <span>GitHub sync</span></button>
+      <button class="nav" data-panel="settings">⚙ <span>Settings</span></button>
+      <div class="sidebar-bottom">
+        <div class="status-line"><span class="dot" id="runtimeDot"></span><span id="runtimeStatus">AI engine not loaded</span></div>
+        <div class="status-line"><span class="dot green"></span><span>Local-first storage</span></div>
+        <p class="tiny">Your browser is the runtime. No application server is required.</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><span class="eyebrow" id="sectionEyebrow">YOUR PRIVATE WORKSPACE</span><h1 id="sectionTitle">Assistant</h1></div>
+        <div class="top-actions"><span class="privacy-pill">⌑ Data stays in your browser</span><button class="icon-btn" id="modelButton" title="Model status">◉ <span id="modelBadge">No model</span></button></div>
+      </header>
+
+      <section class="panel active" id="panel-chat">
+        <div class="chat-wrap">
+          <div class="welcome" id="welcome">
+            <div class="hero-orb">✳</div>
+            <p class="eyebrow">UNIVERSAL INTELLIGENCE · v1.0</p>
+            <h2>Your intelligence.<br><em>Your control.</em></h2>
+            <p class="muted welcome-copy">A browser-based AI workspace powered by an on-device model. Your conversations and project memory stay in this browser unless you explicitly export or approve a GitHub sync.</p>
+            <div class="suggestions">
+              <button class="suggestion" data-prompt="Help me design a secure software architecture.">⌘ <span>Design a software architecture</span></button>
+              <button class="suggestion" data-prompt="Review my project plan and identify risks.">▤ <span>Review a project plan</span></button>
+              <button class="suggestion" data-prompt="Explain how to debug a difficult application error.">⌁ <span>Debug an application issue</span></button>
+            </div>
+          </div>
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <div class="composer-wrap">
+            <div class="model-progress hidden" id="modelProgress"><div class="progress-head"><span id="progressText">Preparing model…</span><span id="progressPct">0%</span></div><div class="progress-track"><div id="progressBar"></div></div></div>
+            <div class="composer">
+              <textarea id="promptInput" rows="1" placeholder="Ask UNIVERSAL INTELLIGENCE anything… (Enter to send)"></textarea>
+              <div class="composer-footer"><span class="tiny">AI runs in your browser · Responses may be imperfect</span><button class="send-btn" id="sendButton" disabled>↑</button></div>
+            </div>
+            <div class="tiny center">Do not submit passwords, private keys, or highly sensitive information.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-projects">
+        <div class="content-panel">
+          <div class="panel-intro"><div><p class="eyebrow">PERSISTENT IN THIS BROWSER</p><h2>Projects & memory</h2><p class="muted">Create project notes and reusable context. Stored in IndexedDB on this device's browser profile.</p></div><button class="primary" id="addProject">＋ New project</button></div>
+          <div id="projectList" class="project-list"></div>
+          <div class="notice"><strong>Storage safety</strong><p>Browser storage is not a backup. Export regularly and approve GitHub backups. Clearing browser data or using private browsing can remove local records.</p></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-sync">
+        <div class="content-panel">
+          <p class="eyebrow">EXPLICIT APPROVAL REQUIRED</p><h2>GitHub synchronization</h2>
+          <p class="muted">Connect a private repository using a fine-grained personal access token limited to that repository. The token is held in memory only and is never saved to IndexedDB or GitHub.</p>
+          <div class="card">
+            <h3>1. Connect repository</h3>
+            <label>Fine-grained GitHub token <input id="githubToken" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+            <p class="tiny">Create a fine-grained token for one private repository with Contents: Read and write. Set an expiration. Never use a classic token with broad access.</p>
+            <div class="form-row"><label>Repository owner <input id="repoOwner" placeholder="your-username"></label><label>Repository name <input id="repoName" placeholder="universal-intelligence"></label></div>
+            <button class="primary" id="connectGithub">Connect & inspect repository</button> <button class="secondary" id="disconnectGithub">Disconnect</button>
+            <div id="githubStatus" class="inline-status">Not connected</div>
+          </div>
+          <div class="card">
+            <h3>2. Review proposed changes</h3>
+            <p class="muted small">Nothing is uploaded until you review the file list and press the approval button.</p>
+            <div id="syncPreview" class="sync-preview">Connect a repository to prepare a backup preview.</div>
+            <button class="primary" id="approveSync" disabled>Review and approve GitHub upload</button>
+          </div>
+          <div class="notice warning"><strong>Important security boundary</strong><p>A static browser app cannot conceal a GitHub token from the browser itself. Use a short-lived, repository-scoped fine-grained token, revoke it after syncing, and do not share this browser session. For stronger credential isolation, a small server-side GitHub App broker would be required; that adds infrastructure.</p></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-settings">
+        <div class="content-panel">
+          <p class="eyebrow">CONFIGURATION & CONTROL</p><h2>Settings</h2>
+          <div class="card">
+            <h3>AI model</h3>
+            <label>Model selection
+              <select id="modelSelect">
+                <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen 2.5 · 0.5B (smallest)</option>
+                <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC" selected>Qwen 2.5 · 1.5B (recommended)</option>
+                <option value="Qwen2.5-3B-Instruct-q4f16_1-MLC">Qwen 2.5 · 3B (heavier)</option>
+              </select>
+            </label>
+            <p class="tiny">The model downloads into browser-managed cache on first use. This can require several GB of bandwidth/storage and WebGPU support. Model availability depends on browser and device compatibility.</p>
+            <button class="primary" id="loadModel">Load selected model</button>
+            <div id="modelStatus" class="inline-status">No model loaded</div>
+          </div>
+          <div class="card">
+            <h3>Skill instructions</h3>
+            <p class="muted small">The bundled SKILL.md is loaded as system context. The agent can only use tools actually implemented in this browser app.</p>
+            <div class="skill-state" id="skillState">Upload your private SKILL.md to activate your full instruction set.</div>
+            <label>Choose your SKILL.md <input id="skillUpload" type="file" accept=".md,text/markdown,text/plain"></label>
+            <button class="secondary" id="viewSkill">View loaded skill</button>
+          </div>
+          <div class="card">
+            <h3>Data portability</h3>
+            <p class="muted small">Export your conversations and project notes as a JSON backup. Keep a copy somewhere safe.</p>
+            <button class="secondary" id="exportData">Export browser data</button>
+            <button class="danger-outline" id="clearData">Delete local data</button>
+          </div>
+          <div class="card">
+            <h3>Capability status</h3><div id="capabilityList" class="capability-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <dialog id="modal"><div class="modal-head"><strong id="modalTitle">Details</strong><button class="icon-btn" id="closeModal">×</button></div><div id="modalBody" class="modal-body"></div></dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
