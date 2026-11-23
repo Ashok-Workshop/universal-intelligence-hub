@@ -130,31 +130,30 @@ function retrieveRelevantSkill(query, maxChars = 3000) {
 }
 
 function getContextProfile() {
-  const smallModel = /1\.5b|1b|0\.5b|0\.6b/i.test(selectedModel);
   return {
-    skillChars: smallModel ? 2500 : 3800,
-    historyChars: smallModel ? 900 : 1500,
-    maxHistoryMessages: smallModel ? 4 : 7,
-    outputTokens: smallModel ? 650 : 800
+    skillChars: 450,
+    historyChars: 250,
+    maxHistoryMessages: 2,
+    outputTokens: 300
   };
 }
 
 function buildRecentHistory(messages, maxChars, maxMessages) {
   const result = [];
   let used = 0;
+
   for (const message of [...messages].reverse()) {
     if (!["user", "assistant"].includes(message.role)) continue;
-    let content = String(message.content || "");
-    if (content.length > 600) content = content.slice(-600);
-    const cost = content.length + 24;
-    if (used + cost > maxChars) {
-      if (result.length || maxChars < 250) break;
-      content = content.slice(-Math.max(150, maxChars - 24));
-    }
+
+    const content = String(message.content || "").slice(-180);
+    if (used + content.length > maxChars) break;
+
     result.unshift({ role: message.role, content });
-    used += content.length + 24;
+    used += content.length;
+
     if (result.length >= maxMessages) break;
   }
+
   return result;
 }
 
@@ -505,99 +504,182 @@ $("loadModel").onclick=loadModel;
 
 let isGenerating=false;
 
-async function sendMessage(){
-  const prompt=$("promptInput").value.trim();
-  if(!prompt||!engine||isGenerating)return;
+async function sendMessage() {
+  const prompt = $("promptInput").value.trim();
 
-  $("promptInput").value="";
-  $("promptInput").style.height="auto";
-  $("sendButton").disabled=true;
-  isGenerating=true;
+  if (!prompt || !engine || isGenerating) return;
 
-  activeConversation.push({role:"user",content:prompt});
-  addMessage("user",prompt);
-  const reply=addMessage("assistant","Planning the task…");
+  $("promptInput").value = "";
+  $("sendButton").disabled = true;
+  isGenerating = true;
 
-  try{
-    const profile=getContextProfile();
-    const relevantSkill=retrieveRelevantSkill(prompt,profile.skillChars);
-    const history=buildRecentHistory(
-      activeConversation.slice(0,-1),
+  // Limit an exceptionally long individual request.
+  const safePrompt = prompt.slice(0, 1600);
+
+  activeConversation.push({
+    role: "user",
+    content: safePrompt
+  });
+
+  addMessage("user", prompt);
+
+  const reply = addMessage("assistant", "Working on your task…");
+
+  try {
+    const profile = getContextProfile();
+
+    // Retrieve only a small relevant extract.
+    // The original full SKILL.md stays untouched in IndexedDB.
+    const relevantSkill = retrieveRelevantSkill(
+      safePrompt,
+      profile.skillChars
+    );
+
+    const history = buildRecentHistory(
+      activeConversation.slice(0, -1),
       profile.historyChars,
       profile.maxHistoryMessages
     );
 
-    const messages=[
-      {role:"system",content:buildAgentSystemPrompt(relevantSkill)},
+    let messages = [
+      {
+        role: "system",
+        content: buildAgentSystemPrompt(relevantSkill)
+      },
       ...history,
-      {role:"user",content:prompt}
+      {
+        role: "user",
+        content: safePrompt
+      }
     ];
 
-    let answer="";
-    let toolCount=0;
+    let answer = "";
+    let toolCount = 0;
 
-    while(toolCount<=4){
-      const result=await engine.chat.completions.create({
-        messages,
-        temperature:0.45,
-        max_tokens:profile.outputTokens
+    while (toolCount < 4) {
+      // Apply the budget before EVERY model generation,
+      // including after local tool execution.
+      const safeMessages = fitMessagesToSafeBudget(messages);
+
+      const result = await engine.chat.completions.create({
+        messages: safeMessages,
+        temperature: 0.4,
+        max_tokens: profile.outputTokens
       });
 
-      const content=result.choices?.[0]?.message?.content||"The model returned an empty response.";
-      const parsed=parseAgentToolCall(content);
+      const content =
+        result.choices?.[0]?.message?.content || "";
 
-      if(!parsed){
-        answer=content;
+      const parsed = parseAgentToolCall(content);
+
+      if (!parsed) {
+        answer = content || "The model returned an empty response.";
         break;
       }
 
-      if(toolCount===4){
-        answer="I reached the local tool-call limit for this request. Here is the latest tool output:\n"+content;
-        break;
+      const call = parsed.call;
+
+      if (
+        !call ||
+        typeof call.name !== "string" ||
+        !call.arguments ||
+        typeof call.arguments !== "object"
+      ) {
+        throw new Error("Invalid tool-call format.");
       }
 
-      const call=parsed.call;
-      if(!call||typeof call.name!=="string"||!call.arguments||typeof call.arguments!=="object"){
-        throw new Error("Invalid tool-call structure.");
-      }
-
-      reply.textContent=`Using local tool: ${call.name} (${toolCount+1}/4)…`;
+      reply.textContent =
+        `Running local tool: ${call.name} (${toolCount + 1}/4)…`;
 
       let toolResult;
-      try{
-        toolResult=await runLocalTool(call.name,call.arguments);
-      }catch(toolError){
-        toolResult={error:toolError.message};
+
+      try {
+        toolResult = await runLocalTool(
+          call.name,
+          call.arguments
+        );
+      } catch (error) {
+        toolResult = { error: error.message };
       }
 
-      messages.push({role:"assistant",content});
+      // Prevent large tool outputs from overflowing context.
+      const resultText = JSON.stringify(toolResult).slice(0, 800);
+
       messages.push({
-        role:"user",
-        content:"LOCAL TOOL RESULT for "+call.name+":\n"+
-          JSON.stringify(toolResult)+
-          "\nUse this result to continue. Do not claim success if the tool returned an error or the user declined."
+        role: "assistant",
+        content
+      });
+
+      messages.push({
+        role: "user",
+        content:
+          "Tool result for " + call.name + ":\n" +
+          resultText +
+          "\nContinue the task using this result."
       });
 
       toolCount++;
     }
 
-    reply.textContent=answer||"The model did not produce a final answer.";
-    activeConversation.push({role:"assistant",content:reply.textContent});
+    if (!answer) {
+      answer = "I reached the four-tool execution limit. Please ask me to continue.";
+    }
+
+    reply.textContent = answer;
+
+    activeConversation.push({
+      role: "assistant",
+      content: answer
+    });
+
     await saveConversation();
 
-    const report=window.__uiSkillRetrieval;
-    if(report){
-      console.info(
-        `[Universal Intelligence] Retrieved ${report.selected}/${report.total} skill chunks`,
-        report.headings
-      );
-    }
-  }catch(e){
-    reply.textContent="Generation error: "+e.message;
-  }finally{
-    isGenerating=false;
-    $("sendButton").disabled=!$("promptInput").value.trim()||!engine;
+  } catch (error) {
+    reply.textContent =
+      "Generation error: " + error.message;
+  } finally {
+    isGenerating = false;
+
+    $("sendButton").disabled =
+      !$("promptInput").value.trim() || !engine;
   }
+}
+function fitMessagesToSafeBudget(messages) {
+  const MAX_TOTAL_CHARS = 4800;
+  const SYSTEM_CHARS = 3300;
+  const LAST_MESSAGE_CHARS = 1000;
+
+  if (!messages.length) return messages;
+
+  const system = {
+    role: "system",
+    content: String(messages[0].content || "").slice(0, SYSTEM_CHARS)
+  };
+
+  const last = messages[messages.length - 1];
+  const finalMessage = {
+    role: last.role,
+    content: String(last.content || "").slice(-LAST_MESSAGE_CHARS)
+  };
+
+  const middle = [];
+  let used = system.content.length + finalMessage.content.length;
+
+  for (const message of messages.slice(1, -1).reverse()) {
+    const content = String(message.content || "").slice(-150);
+    const cost = content.length + 20;
+
+    if (used + cost > MAX_TOTAL_CHARS) break;
+
+    middle.unshift({
+      role: message.role,
+      content
+    });
+
+    used += cost;
+  }
+
+  return [system, ...middle, finalMessage];
 }
 
 async function saveConversation(){
